@@ -1,4 +1,4 @@
-name: Selenium and Rest Assured Tests
+name: Selenium and Rest Assured Tests on EC2
 
 # Trigger the workflow on push or pull request events to the main branch
 on:
@@ -17,62 +17,82 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@v4
 
-      # Set up JDK 17 (required for modern Selenium and Rest Assured)
-      - name: Set up JDK 17
-        uses: actions/setup-java@v4
+      # Configure AWS credentials
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
         with:
-          java-version: '17'
-          distribution: 'temurin'
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: ${{ secrets.AWS_REGION }}
 
-      # Set up Node.js (if Chrome/Chromedriver installation requires it)
-      - name: Set up Node.js
-        uses: actions/setup-node@v4
-        with:
-          node-version: '18'
-
-      # Install Maven dependencies
-      - name: Cache Maven dependencies
-        uses: actions/cache@v3
-        with:
-          path: ~/.m2/repository
-          key: ${{ runner.os }}-maven-${{ hashFiles('**/pom.xml') }}
-          restore-keys: |
-            ${{ runner.os }}-maven-
-
-      # Install Maven and build
-      - name: Build with Maven
-        run: mvn -B package --file pom.xml
-
-      # Install Chrome and Chromedriver for Selenium
-      - name: Install Chrome and Chromedriver
+      # Start EC2 instance
+      - name: Start EC2 instance
         run: |
-          # Install Chrome
-          wget -q -O - https://dl-ssl.google.com/linux/linux_signing_key.pub | sudo apt-key add -
-          echo "deb [arch=amd64] http://dl.google.com/linux/chrome/deb/ stable main" | sudo tee /etc/apt/sources.list.d/google-chrome.list
-          sudo apt-get update
-          sudo apt-get install -y google-chrome-stable
-          # Install Chromedriver (match Chrome version)
-          CHROME_VERSION=$(google-chrome --version | cut -d ' ' -f 3 | cut -d '.' -f 1-3)
-          wget -N https://storage.googleapis.com/chrome-for-testing-public/${CHROME_VERSION}/linux64/chromedriver-linux64.zip
-          unzip -o chromedriver-linux64.zip -d chromedriver-linux64
-          sudo mv chromedriver-linux64/chromedriver-linux64/chromedriver /usr/local/bin/
-          sudo chmod +x /usr/local/bin/chromedriver
-          rm -rf chromedriver-linux64*
+          aws ec2 start-instances --instance-ids ${{ secrets.EC2_INSTANCE_ID }}
+          aws ec2 wait instance-running --instance-ids ${{ secrets.EC2_INSTANCE_ID }}
 
-      # Install Xvfb for headless testing
-      - name: Install Xvfb
-        run: sudo apt-get install -y xvfb
-
-      # Run tests with Maven in headless mode
-      - name: Run Selenium and Rest Assured Tests
+      # Get EC2 public IP
+      - name: Get EC2 public IP
+        id: get-ip
         run: |
-          Xvfb :99 -screen 0 1280x1024x24 & export DISPLAY=:99
-          mvn test -Dselenide.headless=true -Dselenide.chromeoptions="--no-sandbox,--disable-dev-shm-usage,--user-data-dir=/tmp/chrome-$(date +%s)"
+          IP=$(aws ec2 describe-instances --instance-ids ${{ secrets.EC2_INSTANCE_ID }} --query "Reservations[*].Instances[*].PublicIpAddress" --output text)
+          echo "ip=$IP" >> $GITHUB_OUTPUT
 
-      # Upload test results (optional)
+      # Set up SSH key
+      - name: Set up SSH key
+        run: |
+          echo "${{ secrets.EC2_SSH_KEY }}" > key.pem
+          chmod 600 key.pem
+
+      # Upload project to EC2
+      - name: Upload project to EC2
+        run: |
+          scp -o StrictHostKeyChecking=no -i key.pem -r . ${{ secrets.EC2_USER }}@${{ steps.get-ip.outputs.ip }}:/home/${{ secrets.EC2_USER }}/project
+
+      # Run tests on EC2 and clean up
+      - name: Run Selenium and Rest Assured Tests on EC2
+        run: |
+          ssh -o StrictHostKeyChecking=no -i key.pem ${{ secrets.EC2_USER }}@${{ steps.get-ip.outputs.ip }} << EOF
+            # Clean up existing Chrome/Chromedriver processes
+            pkill -9 chrome || true
+            pkill -9 chromedriver || true
+            # Clean up temporary Chrome directories
+            rm -rf /tmp/.com.google.Chrome* ~/.cache/google-chrome
+            # Run tests with unique user-data-dir
+            cd /home/${{ secrets.EC2_USER }}/project
+            mvn test -Dselenide.headless=true -Dselenide.chromeoptions="--no-sandbox,--disable-dev-shm-usage,--user-data-dir=/tmp/chrome-\$(date +%s)"
+          EOF
+
+      # Download test results from EC2
+      - name: Download test results from EC2
+        run: |
+          mkdir -p results
+          scp -o StrictHostKeyChecking=no -i key.pem -r ${{ secrets.EC2_USER }}@${{ steps.get-ip.outputs.ip }}:/home/${{ secrets.EC2_USER }}/project/target/surefire-reports/* results/
+
+      # Upload test results as artifact
       - name: Upload test results
         if: always()
         uses: actions/upload-artifact@v4
         with:
           name: test-results
-          path: target/surefire-reports/
+          path: results/
+
+      # Clean up files on EC2
+      - name: Clean up files on EC2
+        if: always()
+        run: |
+          ssh -o StrictHostKeyChecking=no -i key.pem ${{ secrets.EC2_USER }}@${{ steps.get-ip.outputs.ip }} << EOF
+            rm -rf /home/${{ secrets.EC2_USER }}/project
+          EOF
+
+      # Stop EC2 instance
+      - name: Stop EC2 instance
+        if: always()
+        run: |
+          aws ec2 stop-instances --instance-ids ${{ secrets.EC2_INSTANCE_ID }}
+          aws ec2 wait instance-stopped --instance-ids ${{ secrets.EC2_INSTANCE_ID }}
+
+      # Clean up local SSH key
+      - name: Clean up local SSH key
+        if: always()
+        run: rm -f key.pem
