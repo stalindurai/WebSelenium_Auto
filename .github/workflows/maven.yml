@@ -66,16 +66,17 @@ jobs:
       # Download test results from EC2
       - name: Download test results from EC2
         run: |
-          mkdir -p results
-          scp -o StrictHostKeyChecking=no -i key.pem -r ${{ secrets.EC2_USER }}@${{ steps.get-ip.outputs.ip }}:/home/${{ secrets.EC2_USER }}/project/target/surefire-reports/* results/
+          mkdir -p runs/run-${{ github.run_id }}
+          scp -o StrictHostKeyChecking=no -i key.pem -r ${{ secrets.EC2_USER }}@${{ steps.get-ip.outputs.ip }}:/home/${{ secrets.EC2_USER }}/project/target/surefire-reports/* runs/run-${{ github.run_id }}/
 
-      # Upload test results as artifact
+      # Upload test results as artifact with run-specific folder
       - name: Upload test results
         if: always()
         uses: actions/upload-artifact@v4
         with:
           name: test-results
-          path: results/
+          path: runs/run-${{ github.run_id }}/
+          retention-days: 30 # Optional: Retain artifacts for 30 days (adjust as needed, max 400)
 
       # Clean up files on EC2
       - name: Clean up files on EC2
