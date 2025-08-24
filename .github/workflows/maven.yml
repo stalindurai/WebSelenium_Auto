@@ -1,0 +1,78 @@
+name: Selenium and Rest Assured Tests
+
+# Trigger the workflow on push or pull request events to the main branch
+on:
+  push:
+    branches: [ main ]
+  pull_request:
+    branches: [ main ]
+
+# Define the job
+jobs:
+  test:
+    runs-on: ubuntu-latest
+
+    steps:
+      # Checkout the repository code
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      # Set up JDK 17 (required for modern Selenium and Rest Assured)
+      - name: Set up JDK 17
+        uses: actions/setup-java@v4
+        with:
+          java-version: '17'
+          distribution: 'temurin'
+
+      # Set up Node.js (if Chrome/Chromedriver installation requires it)
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '18'
+
+      # Install Maven dependencies
+      - name: Cache Maven dependencies
+        uses: actions/cache@v3
+        with:
+          path: ~/.m2/repository
+          key: ${{ runner.os }}-maven-${{ hashFiles('**/pom.xml') }}
+          restore-keys: |
+            ${{ runner.os }}-maven-
+
+      # Install Maven and build
+      - name: Build with Maven
+        run: mvn -B package --file pom.xml
+
+      # Install Chrome and Chromedriver for Selenium
+      - name: Install Chrome and Chromedriver
+        run: |
+          # Install Chrome
+          wget -q -O - https://dl-ssl.google.com/linux/linux_signing_key.pub | sudo apt-key add -
+          echo "deb [arch=amd64] http://dl.google.com/linux/chrome/deb/ stable main" | sudo tee /etc/apt/sources.list.d/google-chrome.list
+          sudo apt-get update
+          sudo apt-get install -y google-chrome-stable
+          # Install Chromedriver (match Chrome version)
+          CHROME_VERSION=$(google-chrome --version | cut -d ' ' -f 3 | cut -d '.' -f 1-3)
+          wget -N https://storage.googleapis.com/chrome-for-testing-public/${CHROME_VERSION}/linux64/chromedriver-linux64.zip
+          unzip -o chromedriver-linux64.zip -d chromedriver-linux64
+          sudo mv chromedriver-linux64/chromedriver-linux64/chromedriver /usr/local/bin/
+          sudo chmod +x /usr/local/bin/chromedriver
+          rm -rf chromedriver-linux64*
+
+      # Install Xvfb for headless testing
+      - name: Install Xvfb
+        run: sudo apt-get install -y xvfb
+
+      # Run tests with Maven in headless mode
+      - name: Run Selenium and Rest Assured Tests
+        run: |
+          Xvfb :99 -screen 0 1280x1024x24 & export DISPLAY=:99
+          mvn test -Dselenide.headless=true -Dselenide.chromeoptions="--no-sandbox,--disable-dev-shm-usage,--user-data-dir=/tmp/chrome-$(date +%s)"
+
+      # Upload test results (optional)
+      - name: Upload test results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: test-results
+          path: target/surefire-reports/
