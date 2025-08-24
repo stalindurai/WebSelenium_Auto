@@ -1,5 +1,6 @@
+package SeleniumScripts;
+
 import org.openqa.selenium.By;
-import org.openqa.selenium.Keys;
 import org.openqa.selenium.WebDriver;
 import org.openqa.selenium.WebElement;
 import org.openqa.selenium.chrome.ChromeDriver;
@@ -49,7 +50,8 @@ public class Login {
 
         WebElement search =driver.findElement(By.name("q"));
         search.sendKeys("Newcastle upon Tyne");
-        search.sendKeys(Keys.ENTER);
+        search.submit();
+//        search.sendKeys(Keys.ENTER);
 
         String title = driver.getTitle();
         Assert.assertEquals(title, exp);
