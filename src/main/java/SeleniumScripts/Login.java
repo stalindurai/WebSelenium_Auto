@@ -11,8 +11,9 @@ import org.testng.Assert;
 import org.testng.annotations.AfterClass;
 import org.testng.annotations.BeforeClass;
 import org.testng.annotations.Test;
-
 import java.time.Duration;
+
+import static java.lang.module.Configuration.*;
 
 public class Login {
 
@@ -22,11 +23,15 @@ public class Login {
     @BeforeClass
     public void before(){
         ChromeOptions chrome_options = new ChromeOptions();
-        chrome_options.addArguments("--disable-features=BlockThirdPartyCookies");
+        chrome_options.addArguments("--headless");
         chrome_options.addArguments("--no-sandbox");
+        chrome_options.addArguments("--disable-dev-shm-usage");
+        chrome_options.addArguments("--user-data-dir=/tmp/chrome-" + System.currentTimeMillis());
+        chrome_options.addArguments("--disable-features=BlockThirdPartyCookies");
         chrome_options.addArguments("--disable-dev-shm-usage");
         chrome_options.addArguments("--disable-notifications");
         chrome_options.addArguments("--disable-popup-blocking");
+
         driver = new ChromeDriver(chrome_options);
     }
 
